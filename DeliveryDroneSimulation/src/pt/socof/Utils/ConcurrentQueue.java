@@ -23,15 +23,23 @@ public class ConcurrentQueue<E> {
         list.addFirst(element);
     }
 
-    public synchronized void removeFirst(){
-        list.removeFirst();
+    public synchronized E removeFirst(){
+        return list.removeFirst();
     }
 
     public synchronized void addLast(E element){
         list.addLast(element);
     }
 
-    public synchronized void removeLast(){
-        list.removeLast();
+    public synchronized E removeLast(){
+        return list.removeLast();
+    }
+
+    public synchronized boolean isEmpty() {
+        return list.isEmpty();
+    }
+
+    public synchronized int size() {
+        return list.size();
     }
 }
