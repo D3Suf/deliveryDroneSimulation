@@ -32,7 +32,7 @@ public class Drone extends Thread {
 
     private static final float MAX_FUEL = 200;
     private static final float DEFAULT_VELOCITY = 10; //Metros por segundo
-    private static final float FUEL_USE = 10; //Por Metro e peso - FUEL_USE*weight*DEFAULT_VELOCITY
+    private static final float FUEL_USE = 10; //Por Metro e peso
     private static final int SECONDS_STEP = 2;
     private static final float DRONE_WEIGHT = 10;
 
@@ -61,30 +61,59 @@ public class Drone extends Thread {
         this.cad.start();
         try {
             while (!isInterrupted()) {
-                this.runningSemaphore.acquire();
-                this.controlTower.updateData(this.getId(),this.correntLocation,this.routeAngle,this.velocity);
+                if (this.routeAngle == null)
+                    calculateRoute();
+
+                this.controlTower.updateData(this.getId(),this.correntLocation,this.routeAngle,this.velocity,this.getNextLocation());
                 AutoPilot autoPilot = new AutoPilot(this);
                 autoPilot.start();
                 Thread.sleep(SECONDS_STEP * 1000);
-
                 autoPilot.completeSemaphore.acquire();
+
                 if (this.correntLocation == this.baseLocation && this.travelLocations.size() > 1) {
                     this.interrupt();
                     this.cad.interrupt();
                 }
-                this.runningSemaphore.release();
             }
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
     }
 
+    private void calculateRoute() throws InterruptedException {
+        Tuple correntLocation = this.correntLocation;
+        Tuple nextLoc = this.getNextLocation();
+
+        List<Tuple> tupleList = this.flyZone.hasClearPath(correntLocation, nextLoc);
+
+        this.runningSemaphore.acquire();
+
+        if (tupleList != null) {
+            Collections.reverse(tupleList);
+            for (Tuple t : tupleList) {
+                this.travelLocations.addFirst(new Location(t, 0));
+            }
+            nextLoc = this.getNextLocation();
+        }
+
+        this.routeAngle = Operations.getRouteAngle(correntLocation, nextLoc);
+        if (this.velocity == null)
+            this.velocity = Drone.DEFAULT_VELOCITY;
+
+        this.runningSemaphore.release();
+    }
+
     public void overrideDestiny(Tuple maneuveringDestiny) {
         //Adiciona um destino intermedio com o objetivo de realizar uma manobra ou alterar velocidade
     }
 
-    public void overrideVelocity(Tuple maneuveringDestiny) {
+    public void overrideVelocity(float maneuveringVelocity, Tuple destiny) throws InterruptedException {
         //Adiciona um destino intermedio com o objetivo de realizar uma manobra ou alterar velocidade
+
+        this.runningSemaphore.acquire();
+        if(destiny==this.getNextLocation())
+            this.velocity=maneuveringVelocity;
+        this.runningSemaphore.release();
     }
 
     public float getTotalWeight() {
@@ -94,10 +123,6 @@ public class Drone extends Thread {
     public Tuple getNextLocation() {
         Location nextLoc = travelLocations.getFirst();
         return nextLoc != null ? travelLocations.getFirst().getLocation() : null;
-    }
-
-    public Semaphore getRunningSemaphore() {
-        return this.runningSemaphore;
     }
 
     private class AutoPilot extends Thread {
@@ -113,32 +138,18 @@ public class Drone extends Thread {
 
         @Override
         public void run() {
-            if (this.drone.routeAngle == null)
-                calculateRoute();
-            calculateNextPosition();
-            this.completeSemaphore.release();
-        }
-
-        private void calculateRoute() {
-            Tuple correntLocation = this.drone.correntLocation;
-            Tuple nextLoc = this.drone.getNextLocation();
-
-            List<Tuple> tupleList = this.drone.flyZone.hasClearPath(correntLocation, nextLoc);
-            if (tupleList != null) {
-                Collections.reverse(tupleList);
-                for (Tuple t : tupleList) {
-                    this.drone.travelLocations.addFirst(new Location(t, 0));
-                }
-                nextLoc = this.drone.getNextLocation();
+            try {
+                calculateNextPosition();
+                this.completeSemaphore.release();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
             }
-
-            this.drone.routeAngle = Operations.getRouteAngle(correntLocation, nextLoc);
-            if (this.drone.velocity == null)
-                this.drone.velocity = Drone.DEFAULT_VELOCITY;
         }
 
-        private void calculateNextPosition() {
+        private void calculateNextPosition() throws InterruptedException {
             float distance = Operations.getDistanceBetweenTwoPoint(this.drone.correntLocation, this.drone.getNextLocation());
+
+            this.drone.runningSemaphore.acquire();
             float maxDistance = this.drone.velocity * Drone.SECONDS_STEP;
             if (distance <= maxDistance) {
                 Location location = this.drone.travelLocations.removeFirst();
@@ -151,6 +162,7 @@ public class Drone extends Thread {
                 this.drone.correntLocation = Operations.nextPosition(this.drone.correntLocation, this.drone.velocity, this.drone.routeAngle);
                 this.drone.fuel -= this.drone.getTotalWeight() * Drone.FUEL_USE * maxDistance;
             }
+            this.drone.runningSemaphore.release();
         }
     }
 }
